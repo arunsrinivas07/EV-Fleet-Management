@@ -1,0 +1,117 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  * {
+    box-sizing: border-box;
+  }
+  body {
+    font-family: 'Inter', system-ui, sans-serif;
+    @apply bg-gray-50 text-gray-900;
+  }
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  ::-webkit-scrollbar-track {
+    @apply bg-gray-100;
+  }
+  ::-webkit-scrollbar-thumb {
+    @apply bg-gray-300 rounded-full;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    @apply bg-gray-400;
+  }
+}
+
+@layer components {
+  .glass-card {
+    @apply bg-white/70 backdrop-blur-md border border-white/50 shadow-glass;
+  }
+  .glass-card-dark {
+    @apply bg-white/10 backdrop-blur-md border border-white/20;
+  }
+  .gradient-green {
+    background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+  }
+  .gradient-blue {
+    background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+  }
+  .gradient-teal {
+    background: linear-gradient(135deg, #14b8a6 0%, #0d9488 100%);
+  }
+  .gradient-purple {
+    background: linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%);
+  }
+  .gradient-orange {
+    background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
+  }
+  .gradient-pink {
+    background: linear-gradient(135deg, #ec4899 0%, #db2777 100%);
+  }
+  .gradient-bg {
+    background: linear-gradient(135deg, #f0fdf4 0%, #ecfeff 50%, #eff6ff 100%);
+  }
+  .btn-primary {
+    @apply bg-gradient-to-r from-emerald-500 to-teal-600 text-white font-semibold px-6 py-3 rounded-2xl shadow-lg hover:shadow-xl hover:from-emerald-600 hover:to-teal-700 transition-all duration-200 active:scale-95;
+  }
+  .btn-secondary {
+    @apply bg-white text-emerald-600 font-semibold px-6 py-3 rounded-2xl border-2 border-emerald-200 hover:border-emerald-400 hover:bg-emerald-50 transition-all duration-200;
+  }
+  .input-field {
+    @apply w-full px-4 py-3 rounded-2xl border border-gray-200 bg-white/80 focus:outline-none focus:ring-2 focus:ring-emerald-400 focus:border-transparent transition-all duration-200 placeholder-gray-400;
+  }
+  .card {
+    @apply bg-white rounded-3xl shadow-card border border-gray-100 p-6;
+  }
+  .card-hover {
+    @apply hover:shadow-card-hover hover:-translate-y-1 transition-all duration-300;
+  }
+  .badge-running {
+    @apply bg-emerald-100 text-emerald-700 border border-emerald-200;
+  }
+  .badge-charging {
+    @apply bg-blue-100 text-blue-700 border border-blue-200;
+  }
+  .badge-idle {
+    @apply bg-amber-100 text-amber-700 border border-amber-200;
+  }
+  .badge-workshop {
+    @apply bg-red-100 text-red-700 border border-red-200;
+  }
+  .sidebar-link {
+    @apply flex items-center gap-3 px-4 py-3 rounded-2xl text-gray-600 hover:bg-emerald-50 hover:text-emerald-700 transition-all duration-200 font-medium;
+  }
+  .sidebar-link.active {
+    @apply bg-gradient-to-r from-emerald-500 to-teal-600 text-white shadow-lg;
+  }
+}
+
+@layer utilities {
+  .text-gradient {
+    @apply bg-gradient-to-r from-emerald-600 to-teal-600 bg-clip-text text-transparent;
+  }
+  .animate-float {
+    animation: float 3s ease-in-out infinite;
+  }
+}
+
+@keyframes float {
+  0%, 100% { transform: translateY(0px); }
+  50% { transform: translateY(-10px); }
+}
+
+@keyframes countUp {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.count-up {
+  animation: countUp 0.5s ease-out forwards;
+}
+
+/* Battery ring animation */
+@keyframes dashOffset {
+  from { stroke-dashoffset: 440; }
+}
