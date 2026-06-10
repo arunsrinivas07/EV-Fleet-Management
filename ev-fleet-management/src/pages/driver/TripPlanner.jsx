@@ -2,13 +2,19 @@ import React, { useState, useCallback, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Route, Zap, CheckCircle, Search, Loader,
-  MousePointer, X, Navigation, ExternalLink,
+  MousePointer, X, Navigation, ExternalLink, Car,
 } from 'lucide-react';
 import TomTomMap, { geocodeAddress, reverseGeocode, searchEVChargers } from '../../components/map/TomTomMap';
+import { useApp } from '../../context/AppContext';
+import StatusBadge from '../../components/shared/StatusBadge';
 
 const INDIA_CENTER = [20.5937, 78.9629];
 
 export default function TripPlanner() {
+  const { user, driverList, vehicleList } = useApp();
+  const myDriver  = driverList.find(d => d.profileId === user?.id) || driverList.find(d => d.name === user?.name);
+  const myVehicle = vehicleList.find(v => v.id === myDriver?.vehicle);
+
   const [fromText,    setFromText]    = useState('');
   const [toText,      setToText]      = useState('');
   const [fromCoord,   setFromCoord]   = useState(null);
@@ -45,8 +51,6 @@ export default function TripPlanner() {
     else                         { setToCoord(coord);   setToText(address);   }
     setPickingField(null);
     setPlanned(false);
-    setMapCenter([lat, lng]);
-    setMapZoom(12);
   }, [pickingField]);
 
   // ── Fetch EV chargers along route midpoint ─────────────────────────────────
@@ -74,10 +78,6 @@ export default function TripPlanner() {
     if (fc) setFromCoord(fc);
     if (tc) setToCoord(tc);
     if (fc && tc) {
-      const midLat = (fc.lat + tc.lat) / 2;
-      const midLng = (fc.lng + tc.lng) / 2;
-      setMapCenter([midLat, midLng]);
-      setMapZoom(7);
       fetchChargers(fc, tc);
     }
     setTimeout(() => { setLoading(false); setPlanned(true); }, 800);
@@ -113,8 +113,17 @@ const duration = totalMinutes !== null
       <div>
         <h2 className="text-2xl font-bold text-gray-800">Trip Planner</h2>
         <p className="text-gray-500 text-sm mt-0.5">
-          Type a location or click <span className="font-semibold text-emerald-600">📍 Pick on Map</span> · EV chargers auto-loaded along route
+          Click source or destination textbox and click on the map to set locations · EV chargers auto-loaded along route
         </p>
+        {myVehicle && (
+          <div className="flex items-center gap-2 mt-2">
+            <Car className="w-4 h-4 text-emerald-500" />
+            <span className="text-sm font-semibold text-gray-700">{myVehicle.manufacturer} {myVehicle.model}</span>
+            <span className="text-xs text-gray-400">({myVehicle.id})</span>
+            <StatusBadge status={myVehicle.status} />
+            <span className="text-xs text-gray-400">· 🔋 {Math.round(myVehicle.batteryPercent)}% · {Math.round(myVehicle.range)} km range</span>
+          </div>
+        )}
       </div>
 
       {/* ── Main grid: left panel + map side by side, equal height ── */}
@@ -168,7 +177,7 @@ const duration = totalMinutes !== null
                     else           { setToText(city);   setToCoord(null);   }
                     setPlanned(false);
                   }}
-                  className="text-xs px-2.5 py-1 bg-gray-100 hover:bg-emerald-100 hover:text-emerald-700 rounded-xl transition-colors text-gray-600"
+                  className="text-xs px-2.5 py-1 bg-gray-100 dark:bg-gray-800 hover:bg-emerald-100 dark:hover:bg-emerald-900/30 hover:text-emerald-700 dark:hover:text-emerald-400 rounded-xl transition-colors text-gray-600 dark:text-gray-300"
                 >
                   {city}
                 </button>
@@ -353,12 +362,15 @@ function LocationField({ label, value, coord, loading, isPicking, dotColor, onCh
         <div className={`absolute left-3.5 top-1/2 -translate-y-1/2 w-3 h-3 rounded-full ${dotColor}`} />
         <input
           type="text"
-          placeholder={`Type or pick on map…`}
+          placeholder="Type or click here & pick on map…"
           value={value}
           onChange={e => onChange(e.target.value)}
+          onClick={onPickMap}
           onBlur={onBlur}
           onKeyDown={e => e.key === 'Enter' && onSearch()}
-          className="input-field pl-9 pr-16 text-sm"
+          className={`input-field pl-9 pr-16 text-sm transition-all ${
+            isPicking ? 'ring-2 ring-emerald-500 border-emerald-500 bg-emerald-50/10 dark:bg-emerald-950/10' : ''
+          }`}
         />
         <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-0.5">
           {loading
@@ -368,19 +380,13 @@ function LocationField({ label, value, coord, loading, isPicking, dotColor, onCh
           {value && <button type="button" onClick={onClear} className="p-1.5 text-gray-300 hover:text-red-400 transition-colors"><X className="w-3.5 h-3.5" /></button>}
         </div>
       </div>
-      <button
-        type="button"
-        onClick={onPickMap}
-        className={`mt-1.5 w-full flex items-center justify-center gap-1.5 py-1.5 rounded-xl text-xs font-semibold border transition-all ${
-          isPicking
-            ? 'bg-emerald-600 text-white border-emerald-600 shadow-sm'
-            : 'bg-gray-50 text-gray-500 border-gray-200 hover:border-emerald-300 hover:text-emerald-600 hover:bg-emerald-50'
-        }`}
-      >
-        <MousePointer className="w-3.5 h-3.5" />
-        {isPicking ? 'Click anywhere on map…' : `📍 Pick ${label} on Map`}
-      </button>
-      {coord && (
+      {isPicking && (
+        <p className="text-xs text-emerald-600 mt-1 pl-1 font-semibold flex items-center gap-1 animate-pulse">
+          <MousePointer className="w-3 h-3" />
+          Click anywhere on the map to set this as {label.toLowerCase()}...
+        </p>
+      )}
+      {coord && !isPicking && (
         <p className={`text-xs mt-1 pl-1 font-medium truncate ${dotColor === 'bg-emerald-500' ? 'text-emerald-600' : 'text-red-500'}`}>
           ✓ {coord.display || `${coord.lat.toFixed(4)}, ${coord.lng.toFixed(4)}`}
         </p>

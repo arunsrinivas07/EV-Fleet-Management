@@ -11,6 +11,7 @@ const pageTitles = {
   '/admin/drivers': 'Driver Analytics',
   '/admin/charts': 'Charts & Reports',
   '/admin/alerts': 'Alert Center',
+  '/admin/add-vehicle': 'Add Vehicle',
 };
 
 export default function AdminLayout() {

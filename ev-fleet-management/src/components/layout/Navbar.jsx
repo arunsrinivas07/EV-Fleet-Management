@@ -1,17 +1,28 @@
 import React, { useState } from 'react';
 import { motion } from 'framer-motion';
-import { Search, Bell, Sun, Moon, Settings, ChevronDown, UserPlus } from 'lucide-react';
+import { Search, Bell, Sun, Moon, Settings, ChevronDown, UserPlus, RefreshCw } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import AssignVehiclePanel from '../shared/AssignVehiclePanel';
-import { unassignedDrivers } from '../../data/mockData';
 
 export default function Navbar({ title }) {
-  const { user, darkMode, setDarkMode, setNotificationDrawer, unreadAlerts } = useApp();
+  const { user, darkMode, setDarkMode, setNotificationDrawer, unreadAlerts, driverList, refreshData } = useApp();
   const [searchFocus,   setSearchFocus]   = useState(false);
   const [assignOpen,    setAssignOpen]    = useState(false);
+  const [refreshing,    setRefreshing]    = useState(false);
 
   const isAdmin = user?.role === 'admin';
-  const pendingCount = unassignedDrivers.length;
+  const pendingCount = driverList.filter(d => !d.vehicle).length;
+
+  const handleRefresh = async () => {
+    setRefreshing(true);
+    try {
+      await refreshData();
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setTimeout(() => setRefreshing(false), 600);
+    }
+  };
 
   return (
     <>
@@ -50,6 +61,7 @@ export default function Navbar({ title }) {
               <motion.button
                 whileTap={{ scale: 0.95 }}
                 onClick={() => setAssignOpen(true)}
+                aria-label="assign-vehicle"
                 className="relative flex items-center gap-2 px-3 py-2.5 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded-2xl transition-colors"
               >
                 <UserPlus className="w-4 h-4 text-emerald-600" />
@@ -67,6 +79,15 @@ export default function Navbar({ title }) {
                 )}
               </motion.button>
             )}
+
+            {/* Refresh Data */}
+            <button
+              onClick={handleRefresh}
+              className="p-2.5 rounded-2xl hover:bg-gray-100 transition-colors text-gray-500"
+              aria-label="Refresh data"
+            >
+              <RefreshCw className={`w-5 h-5 ${refreshing ? 'animate-spin text-emerald-600' : ''}`} />
+            </button>
 
             {/* Dark mode */}
             <button

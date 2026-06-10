@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { motion } from 'framer-motion';
 import { Battery, Activity, WifiOff, Wrench, Gauge, AlertTriangle, Bell, CheckCircle, Filter } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
+import { resolveAlert } from '../../lib/db';
 
 const alertIcons = {
   low_battery: Battery,
@@ -45,12 +46,9 @@ export default function AlertCenter() {
     return a.severity === filter;
   });
 
-  const toggleResolve = (id) => {
-    setResolved(prev => {
-      const next = new Set(prev);
-      next.has(id) ? next.delete(id) : next.add(id);
-      return next;
-    });
+  const toggleResolve = async (id) => {
+    setResolved(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
+    await resolveAlert(id);
   };
 
   const counts = {

@@ -12,6 +12,7 @@ import DriverAnalytics from './pages/admin/DriverAnalytics';
 import AlertCenter from './pages/admin/AlertCenter';
 import VehicleDetails from './pages/admin/VehicleDetails';
 import ChartsPage from './pages/admin/ChartsPage';
+import AddVehicle from './pages/admin/AddVehicle';
 import DriverDashboard from './pages/driver/DriverDashboard';
 import RangePrediction from './pages/driver/RangePrediction';
 import TripPlanner from './pages/driver/TripPlanner';
@@ -75,6 +76,7 @@ function AppRoutes() {
         <Route path="alerts"    element={<AlertCenter />} />
         <Route path="charts"    element={<ChartsPage />} />
         <Route path="vehicle/:id" element={<VehicleDetails />} />
+        <Route path="add-vehicle" element={<AddVehicle />} />
       </Route>
 
       {/* Driver */}

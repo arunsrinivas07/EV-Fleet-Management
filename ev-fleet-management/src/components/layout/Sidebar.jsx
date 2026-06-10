@@ -4,13 +4,14 @@ import { motion, AnimatePresence } from 'framer-motion';
 import {
   LayoutDashboard, Car, Users, Bell, BarChart3, LogOut,
   Zap, ChevronLeft, ChevronRight, MapPin, Route, Activity,
-  Navigation, TrendingUp, Settings
+  Navigation, TrendingUp, Settings, PlusCircle
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 
 const adminLinks = [
   { to: '/admin', label: 'Dashboard', icon: LayoutDashboard, end: true },
   { to: '/admin/fleet', label: 'Fleet Monitor', icon: Car },
+  { to: '/admin/add-vehicle', label: 'Add Vehicle', icon: PlusCircle },
   { to: '/admin/drivers', label: 'Driver Analytics', icon: Users },
   { to: '/admin/charts', label: 'Charts & Reports', icon: BarChart3 },
   { to: '/admin/alerts', label: 'Alert Center', icon: Bell },
@@ -38,7 +39,7 @@ export default function Sidebar({ role }) {
     <motion.aside
       animate={{ width: sidebarOpen ? 260 : 80 }}
       transition={{ duration: 0.3, ease: 'easeInOut' }}
-      className="relative bg-white border-r border-gray-100 shadow-sm flex flex-col h-screen sticky top-0 z-30 overflow-hidden"
+      className="relative bg-white border-r border-gray-100 shadow-sm flex flex-col h-screen sticky top-0 z-30"
     >
       {/* Logo */}
       <div className="p-5 flex items-center gap-3 border-b border-gray-100 min-h-[72px]">
@@ -53,8 +54,8 @@ export default function Sidebar({ role }) {
               exit={{ opacity: 0, x: -10 }}
               transition={{ duration: 0.2 }}
             >
-              <div className="font-bold text-gray-800 text-sm leading-tight">EV Fleet</div>
-              <div className="text-xs text-emerald-600 font-medium">Management</div>
+              <div className="font-bold text-gray-800 text-sm leading-tight">IntelliEV</div>
+              <div className="text-xs text-emerald-600 font-medium">Fleet Management</div>
             </motion.div>
           )}
         </AnimatePresence>
@@ -89,10 +90,9 @@ export default function Sidebar({ role }) {
             to={to}
             end={end}
             className={({ isActive }) =>
-              `flex items-center gap-3 px-4 py-3 rounded-2xl transition-all duration-200 font-medium text-sm group relative ${
-                isActive
-                  ? 'bg-gradient-to-r from-emerald-500 to-teal-600 text-white shadow-lg shadow-emerald-200'
-                  : 'text-gray-600 hover:bg-emerald-50 hover:text-emerald-700'
+              `flex items-center gap-3 px-4 py-3 rounded-2xl transition-all duration-200 font-medium text-sm group relative ${isActive
+                ? 'bg-gradient-to-r from-emerald-500 to-teal-600 text-white shadow-lg shadow-emerald-200 active-sidebar-link'
+                : 'text-gray-600 hover:bg-emerald-50 hover:text-emerald-700'
               }`
             }
           >

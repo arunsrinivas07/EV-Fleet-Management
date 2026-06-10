@@ -65,6 +65,8 @@ returns trigger
 language plpgsql
 security definer set search_path = public
 as $$
+declare
+  next_driver_id text;
 begin
   insert into public.profiles (id, full_name, phone, role)
   values (
@@ -74,6 +76,25 @@ begin
     coalesce(new.raw_user_meta_data ->> 'role', 'driver')
   )
   on conflict (id) do nothing;   -- safe to re-run
+
+  -- If it's a driver, also auto-create a row in public.drivers table
+  if coalesce(new.raw_user_meta_data ->> 'role', 'driver') = 'driver' then
+    if not exists (select 1 from public.drivers where profile_id = new.id) then
+      select 'D-' || lpad((coalesce(max(substring(id from 3)::integer), 0) + 1)::text, 3, '0')
+      into next_driver_id
+      from public.drivers;
+
+      insert into public.drivers (id, profile_id, name, avatar, vehicle_id)
+      values (
+        next_driver_id,
+        new.id,
+        coalesce(new.raw_user_meta_data ->> 'full_name', split_part(new.email, '@', 1)),
+        upper(substring(coalesce(new.raw_user_meta_data ->> 'full_name', new.email), 1, 2)),
+        null
+      );
+    end if;
+  end if;
+
   return new;
 end;
 $$;

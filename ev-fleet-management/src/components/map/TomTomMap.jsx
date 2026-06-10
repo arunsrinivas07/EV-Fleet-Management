@@ -293,7 +293,6 @@ export default function TomTomMap({
         const coords = data.routes[0].legs[0].points.map(p => [p.longitude, p.latitude]);
         map.addSource(SRC, { type: 'geojson', data: { type: 'Feature', geometry: { type: 'LineString', coordinates: coords } } });
         map.addLayer({ id: LYR, type: 'line', source: SRC, layout: { 'line-join': 'round', 'line-cap': 'round' }, paint: { 'line-color': '#10b981', 'line-width': 4, 'line-opacity': 0.85 } });
-        map.fitBounds(coords.reduce((b, c) => b.extend(c), new tt.LngLatBounds(coords[0], coords[0])), { padding: 70 });
       } catch (e) { console.warn('[TomTom] route error:', e); }
     })();
   }, [ready, route]);

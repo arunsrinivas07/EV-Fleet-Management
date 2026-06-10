@@ -1,13 +1,13 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
-  ArrowLeft, MapPin, Gauge, DollarSign, Battery, Activity,
+  ArrowLeft, MapPin, Gauge, IndianRupee, Battery, Activity,
   Route, Wrench, Calendar, User, Zap, CreditCard,
-  TrendingDown, ChevronDown, ChevronUp,
+  TrendingDown, ChevronDown, ChevronUp, RefreshCw,
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
-import { vehicleExpenses } from '../../data/mockData';
+import { fetchVehicleExpenses, fetchVehicleDetails, fetchAnalyticsSeries } from '../../lib/db';
 import BatteryRing from '../../components/shared/BatteryRing';
 import StatusBadge from '../../components/shared/StatusBadge';
 import TomTomMap from '../../components/map/TomTomMap';
@@ -148,10 +148,97 @@ export default function VehicleDetails() {
   const navigate = useNavigate();
   const { vehicleList, driverList } = useApp();
   const [showAllHistory, setShowAllHistory] = useState(false);
+  const [expenses,   setExpenses]   = useState({ total:0, charging:0, maintenance:0, insurance:0, misc:0, history:[] });
+  const [svcData,    setSvcData]    = useState({ serviceHistory:[], maintenanceRecords:[] });
+  const [loadingEx,  setLoadingEx]  = useState(true);
+  const [expensePeriod, setExpensePeriod] = useState('yearly');
+  const [growthSeries, setGrowthSeries] = useState([]);
+
+  // Filter expenses based on period, relative to the latest transaction date
+  const filteredExpenses = useMemo(() => {
+    if (!expenses.history || expenses.history.length === 0) {
+      return { total: 0, charging: 0, maintenance: 0, insurance: 0, misc: 0, history: [] };
+    }
+    
+    // Find the latest expense date in history to anchor relative calculations
+    const dates = expenses.history.map(h => h.rawDate ? new Date(h.rawDate).getTime() : 0).filter(Boolean);
+    const maxDateMs = dates.length > 0 ? Math.max(...dates) : Date.now();
+    const maxDate = new Date(maxDateMs);
+    
+    const filteredHistory = expenses.history.filter(item => {
+      if (!item.rawDate) return true;
+      const itemDate = new Date(item.rawDate);
+      const diffTime = maxDate - itemDate;
+      const diffDays = diffTime / (1000 * 60 * 60 * 24);
+      
+      if (expensePeriod === 'weekly') {
+        return diffDays <= 7;
+      } else if (expensePeriod === 'monthly') {
+        return diffDays <= 30;
+      } else if (expensePeriod === 'last3months') {
+        return diffDays <= 90;
+      } else if (expensePeriod === 'yearly') {
+        return diffDays <= 365;
+      }
+      return true;
+    });
+    
+    const sum = (type) => filteredHistory.filter(r => r.type === type).reduce((s, r) => s + r.amount, 0);
+    const total = filteredHistory.reduce((s, r) => s + r.amount, 0);
+    
+    return {
+      total,
+      charging: sum('Charging'),
+      maintenance: sum('Maintenance'),
+      insurance: sum('Insurance'),
+      misc: sum('Misc'),
+      history: filteredHistory,
+    };
+  }, [expenses, expensePeriod]);
 
   const vehicle = vehicleList.find(v => v.id === id);
   const driver  = driverList.find(d => d.vehicle === id);
-  const expenses = vehicleExpenses[id] ?? { total: 0, charging: 0, maintenance: 0, insurance: 0, misc: 0, history: [] };
+
+  // Fetch expenses + service records + growth series from Supabase
+  useEffect(() => {
+    if (!id) return;
+    setLoadingEx(true);
+    Promise.all([
+      fetchVehicleExpenses(id),
+      fetchVehicleDetails(id),
+      fetchAnalyticsSeries('general', 'growth')
+    ])
+      .then(([exp, svc, gro]) => {
+        setExpenses(exp);
+        setSvcData(svc);
+        setGrowthSeries(gro);
+      })
+      .finally(() => setLoadingEx(false));
+  }, [id]);
+
+  const getAdminRevenue = (periodKey) => {
+    const periodPoints = growthSeries.filter(pt => pt.period_type === periodKey);
+    const pt = periodPoints.find(p => p.metric_type === 'fleetRevenue');
+    const val = pt ? parseFloat(pt.value) : 0;
+    const numVehicles = vehicleList.length || 8;
+    return Math.round(val / numVehicles);
+  };
+
+  const getTrips = (periodKey) => {
+    const totalTrips = driver ? driver.trips : 120; // fallback
+    const scale = { weekly: 1/52, monthly: 1/12, last3months: 3/12, yearly: 1 }[periodKey] || 1/52;
+    return Math.round(totalTrips * scale);
+  };
+
+  const getDistance = (periodKey) => {
+    const scale = { weekly: 1/52, monthly: 1/12, last3months: 3/12, yearly: 1 }[periodKey] || 1/52;
+    return Math.round((vehicle ? vehicle.totalDistance : 0) * scale);
+  };
+
+  // Merge Supabase service data into vehicle object
+  const vehicleWithDetails = vehicle
+    ? { ...vehicle, ...svcData }
+    : null;
 
   if (!vehicle) {
     return (
@@ -162,17 +249,17 @@ export default function VehicleDetails() {
     );
   }
 
+  const v = vehicleWithDetails || vehicle;
+
   const heroStats = [
-    { label: 'Battery',        value: `${Math.round(vehicle.batteryPercent)}%`,       icon: Battery,    color: 'text-emerald-600' },
-    { label: 'Battery Health', value: `${vehicle.batteryHealth}%`,                    icon: Activity,   color: vehicle.batteryHealth >= 85 ? 'text-emerald-600' : 'text-amber-600' },
-    { label: 'Current Speed',  value: `${Math.round(vehicle.speed)} km/h`,            icon: Gauge,      color: 'text-blue-600' },
-    { label: 'Range Left',     value: `${Math.round(vehicle.range)} km`,              icon: Route,      color: 'text-teal-600' },
-    { label: 'Revenue',        value: `₹${vehicle.revenue.toLocaleString()}`,         icon: DollarSign, color: 'text-purple-600' },
-    { label: 'Total Distance', value: `${vehicle.totalDistance.toLocaleString()} km`, icon: MapPin,     color: 'text-orange-600' },
+    { label: 'Battery',        value: `${Math.round(v.batteryPercent)}%`,       icon: Battery,    color: 'text-emerald-600' },
+    { label: 'Battery Health', value: `${v.batteryHealth}%`,                    icon: Activity,   color: v.batteryHealth >= 85 ? 'text-emerald-600' : 'text-amber-600' },
+    { label: 'Current Speed',  value: `${Math.round(v.speed)} km/h`,            icon: Gauge,      color: 'text-blue-600' },
+    { label: 'Range Left',     value: `${Math.round(v.range)} km`,              icon: Route,      color: 'text-teal-600' },
   ];
 
   const expenseTypeColor = { Charging: 'bg-blue-100 text-blue-700', Maintenance: 'bg-amber-100 text-amber-700', Insurance: 'bg-purple-100 text-purple-700', Misc: 'bg-gray-100 text-gray-600' };
-  const visibleHistory = showAllHistory ? expenses.history : expenses.history.slice(0, 4);
+  const visibleHistory = showAllHistory ? filteredExpenses.history : filteredExpenses.history.slice(0, 4);
 
   return (
     <div className="space-y-6 max-w-5xl">
@@ -185,21 +272,21 @@ export default function VehicleDetails() {
         Back to Fleet
       </button>
 
-      {/* ── Hero card ────────────────────────────────────────────────────── */}
+      {/* ── Hero card ── */}
       <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="card overflow-hidden p-0">
         <div className="relative h-56 overflow-hidden">
-          <img src={vehicle.image} alt={vehicle.model} className="w-full h-full object-cover" />
+          <img src={v.image} alt={v.model} className="w-full h-full object-cover" />
           <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-black/10 to-transparent" />
           <div className="absolute bottom-4 left-6 text-white">
-            <h1 className="text-3xl font-bold">{vehicle.model}</h1>
-            <p className="text-gray-300 mt-1">{vehicle.manufacturer} · {vehicle.id}</p>
+            <h1 className="text-3xl font-bold">{v.model}</h1>
+            <p className="text-gray-300 mt-1">{v.manufacturer} · {v.id}</p>
           </div>
-          <div className="absolute top-4 right-4"><StatusBadge status={vehicle.status} /></div>
+          <div className="absolute top-4 right-4"><StatusBadge status={v.status} /></div>
           <div className="absolute bottom-4 right-6">
-            <BatteryRing percent={Math.round(vehicle.batteryPercent)} size={72} strokeWidth={6} />
+            <BatteryRing percent={Math.round(v.batteryPercent)} size={72} strokeWidth={6} />
           </div>
         </div>
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 divide-x divide-gray-100 border-t border-gray-100">
+        <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-4 divide-x divide-gray-100 border-t border-gray-100">
           {heroStats.map(s => (
             <div key={s.label} className="p-4 text-center">
               <s.icon className={`w-5 h-5 mx-auto mb-1 ${s.color}`} />
@@ -217,11 +304,11 @@ export default function VehicleDetails() {
           <SectionHeader icon={Gauge} gradient="gradient-green" title="Vehicle Information" />
           <div className="space-y-3 mt-4">
             {[
-              { label: 'Model',            value: vehicle.model },
-              { label: 'Manufacturer',     value: vehicle.manufacturer },
-              { label: 'Vehicle ID',       value: vehicle.id },
-              { label: 'Battery Capacity', value: vehicle.batteryCapacity },
-              { label: 'Current Location', value: vehicle.location },
+              { label: 'Model',            value: v.model },
+              { label: 'Manufacturer',     value: v.manufacturer },
+              { label: 'Vehicle ID',       value: v.id },
+              { label: 'Battery Capacity', value: v.batteryCapacity },
+              { label: 'Current Location', value: v.location },
             ].map(item => (
               <div key={item.label} className="flex items-center justify-between py-2 border-b border-gray-50">
                 <span className="text-sm text-gray-500">{item.label}</span>
@@ -259,23 +346,94 @@ export default function VehicleDetails() {
           </div>
         </motion.div>
       </div>
+      {/* ── Operational Performance by Period ── */}
+      <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.12 }} className="card">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
+          <SectionHeader icon={Activity} gradient="gradient-blue" title="Operational Performance" />
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          {[
+            { period: 'weekly',      label: 'Weekly' },
+            { period: 'monthly',     label: 'Monthly' },
+            { period: 'last3months', label: 'Last 3 Mo' },
+            { period: 'yearly',      label: 'Yearly' },
+          ].map(p => {
+            const revenueVal = getAdminRevenue(p.period);
+            const tripsVal = getTrips(p.period);
+            const distanceVal = getDistance(p.period);
+            return (
+              <div key={p.period} className="bg-gray-50/50 hover:bg-gray-50 border border-gray-100 rounded-2xl p-4 transition-all">
+                <p className="text-sm font-bold text-gray-800 border-b border-gray-100 pb-2 mb-3">{p.label}</p>
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <IndianRupee className="w-4 h-4 text-emerald-500" />
+                      <span className="text-xs text-gray-500">Revenue</span>
+                    </div>
+                    <span className="text-sm font-semibold text-emerald-700">₹{revenueVal.toLocaleString()}</span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Route className="w-4 h-4 text-blue-500" />
+                      <span className="text-xs text-gray-500">Trips</span>
+                    </div>
+                    <span className="text-sm font-semibold text-gray-700">{tripsVal}</span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <MapPin className="w-4 h-4 text-orange-500" />
+                      <span className="text-xs text-gray-500">Distance</span>
+                    </div>
+                    <span className="text-sm font-semibold text-gray-700">{distanceVal.toLocaleString()} km</span>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </motion.div>
 
       {/* ── Expenses ─────────────────────────────────────────────────────── */}
       <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.15 }} className="card">
-        <div className="flex items-start justify-between mb-6">
-          <SectionHeader icon={CreditCard} gradient="gradient-teal" title="Expense Breakdown" />
-          <div className="text-right">
-            <p className="text-2xl font-bold text-gray-800">₹{expenses.total.toLocaleString()}</p>
-            <p className="text-xs text-gray-400">Total lifetime expenses</p>
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
+          <div className="flex flex-col sm:flex-row sm:items-center gap-4">
+            <SectionHeader icon={CreditCard} gradient="gradient-teal" title="Expense Breakdown" />
+            <div className="flex gap-1 p-1 bg-gray-100 rounded-2xl w-fit">
+              {[
+                { key: 'weekly', label: 'Weekly' },
+                { key: 'monthly', label: 'Monthly' },
+                { key: 'last3months', label: 'Last 3 Mo' },
+                { key: 'yearly', label: 'Yearly' },
+              ].map(p => (
+                <button
+                  key={p.key}
+                  onClick={() => setExpensePeriod(p.key)}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition-all ${
+                    expensePeriod === p.key
+                      ? 'bg-white text-emerald-700 shadow-md'
+                      : 'text-gray-500 hover:text-gray-700'
+                  }`}
+                >
+                  {p.label}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="text-left md:text-right">
+            <p className="text-2xl font-bold text-gray-800">₹{filteredExpenses.total.toLocaleString()}</p>
+            <p className="text-xs text-gray-400">
+              {expensePeriod === 'weekly' ? 'Weekly' : expensePeriod === 'monthly' ? 'Monthly' : expensePeriod === 'last3months' ? 'Last 3 months' : 'Yearly'} expenses
+            </p>
           </div>
         </div>
 
         {/* Top 3 expense cards */}
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
           {[
-            { label: 'Charging Expenses',    value: expenses.charging,    icon: Zap,          color: 'bg-blue-50',   textColor: 'text-blue-700',   iconBg: 'bg-blue-100',   iconColor: 'text-blue-600' },
-            { label: 'Maintenance Expenses', value: expenses.maintenance, icon: Wrench,        color: 'bg-amber-50',  textColor: 'text-amber-700',  iconBg: 'bg-amber-100',  iconColor: 'text-amber-600' },
-            { label: 'Insurance',            value: expenses.insurance,   icon: TrendingDown,  color: 'bg-purple-50', textColor: 'text-purple-700', iconBg: 'bg-purple-100', iconColor: 'text-purple-600' },
+            { label: 'Charging Expenses',    value: filteredExpenses.charging,    icon: Zap,          color: 'bg-blue-50',   textColor: 'text-blue-700',   iconBg: 'bg-blue-100',   iconColor: 'text-blue-600' },
+            { label: 'Maintenance Expenses', value: filteredExpenses.maintenance, icon: Wrench,        color: 'bg-amber-50',  textColor: 'text-amber-700',  iconBg: 'bg-amber-100',  iconColor: 'text-amber-600' },
+            { label: 'Insurance',            value: filteredExpenses.insurance,   icon: TrendingDown,  color: 'bg-purple-50', textColor: 'text-purple-700', iconBg: 'bg-purple-100', iconColor: 'text-purple-600' },
           ].map(e => (
             <div key={e.label} className={`${e.color} rounded-2xl p-4`}>
               <div className={`w-9 h-9 ${e.iconBg} rounded-xl flex items-center justify-center mb-3`}>
@@ -284,7 +442,7 @@ export default function VehicleDetails() {
               <p className={`text-2xl font-bold ${e.textColor}`}>₹{e.value.toLocaleString()}</p>
               <p className="text-xs text-gray-500 mt-0.5">{e.label}</p>
               <p className={`text-xs font-semibold ${e.textColor} mt-1`}>
-                {expenses.total ? Math.round(e.value / expenses.total * 100) : 0}% of total
+                {filteredExpenses.total ? Math.round(e.value / filteredExpenses.total * 100) : 0}% of total
               </p>
             </div>
           ))}
@@ -294,7 +452,7 @@ export default function VehicleDetails() {
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           <div>
             <p className="text-sm font-semibold text-gray-700 mb-3">Distribution</p>
-            <ExpenseDonut {...expenses} />
+            <ExpenseDonut {...filteredExpenses} />
           </div>
           <div>
             <p className="text-sm font-semibold text-gray-700 mb-3">Recent Transactions</p>
@@ -320,12 +478,12 @@ export default function VehicleDetails() {
                 </motion.div>
               ))}
             </div>
-            {expenses.history.length > 4 && (
+            {filteredExpenses.history.length > 4 && (
               <button
                 onClick={() => setShowAllHistory(!showAllHistory)}
                 className="mt-3 w-full flex items-center justify-center gap-1.5 text-xs font-semibold text-emerald-600 hover:text-emerald-700 py-2 hover:bg-emerald-50 rounded-2xl transition-colors"
               >
-                {showAllHistory ? <><ChevronUp className="w-3.5 h-3.5" /> Show less</> : <><ChevronDown className="w-3.5 h-3.5" /> Show all ({expenses.history.length})</>}
+                {showAllHistory ? <><ChevronUp className="w-3.5 h-3.5" /> Show less</> : <><ChevronDown className="w-3.5 h-3.5" /> Show all ({filteredExpenses.history.length})</>}
               </button>
             )}
           </div>
@@ -337,7 +495,7 @@ export default function VehicleDetails() {
         <div className="flex items-center justify-between mb-4">
           <SectionHeader icon={MapPin} gradient="gradient-blue" title="Live Location" />
           <div className="flex items-center gap-3">
-            <span className="text-xs text-gray-500 font-medium">{vehicle.location}</span>
+            <span className="text-xs text-gray-500 font-medium">{v.location}</span>
             <div className="flex items-center gap-1.5 bg-emerald-50 border border-emerald-200 rounded-xl px-3 py-1.5">
               <div className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse" />
               <span className="text-xs font-semibold text-emerald-700">Live</span>
@@ -345,10 +503,10 @@ export default function VehicleDetails() {
           </div>
         </div>
         <TomTomMap
-          center={[vehicle.lat, vehicle.lng]}
+          center={[v.lat, v.lng]}
           zoom={13}
           height={300}
-          markers={[{ lat: vehicle.lat, lng: vehicle.lng, type: vehicle.status === 'charging' ? 'charging' : 'vehicle', label: vehicle.id.split('-')[1], popup: `${vehicle.model} · ${vehicle.location}` }]}
+          markers={[{ lat: v.lat, lng: v.lng, type: v.status === 'charging' ? 'charging' : 'vehicle', label: v.id.split('-')[1], popup: `${v.model} · ${v.location}` }]}
         />
       </motion.div>
 
@@ -357,24 +515,34 @@ export default function VehicleDetails() {
         <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.25 }} className="card">
           <SectionHeader icon={Calendar} gradient="gradient-purple" title="Service History" />
           <div className="space-y-2 mt-4">
-            {vehicle.serviceHistory.map((s, i) => (
-              <div key={i} className="flex items-center gap-3 p-3 bg-gray-50 rounded-2xl">
-                <div className="w-2 h-2 bg-emerald-500 rounded-full flex-shrink-0" />
-                <span className="text-sm text-gray-600">{s}</span>
-              </div>
-            ))}
+            {loadingEx
+              ? <div className="space-y-2">{[1,2].map(i => <div key={i} className="h-10 bg-gray-100 rounded-2xl animate-pulse" />)}</div>
+              : v.serviceHistory?.length
+                ? v.serviceHistory.map((s, i) => (
+                    <div key={i} className="flex items-center gap-3 p-3 bg-gray-50 rounded-2xl">
+                      <div className="w-2 h-2 bg-emerald-500 rounded-full flex-shrink-0" />
+                      <span className="text-sm text-gray-600">{s}</span>
+                    </div>
+                  ))
+                : <p className="text-sm text-gray-400">No service history recorded.</p>
+            }
           </div>
         </motion.div>
 
         <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.28 }} className="card">
           <SectionHeader icon={Wrench} gradient="gradient-orange" title="Maintenance Records" />
           <div className="space-y-2 mt-4">
-            {vehicle.maintenanceRecords.map((m, i) => (
-              <div key={i} className="flex items-center gap-3 p-3 bg-amber-50 rounded-2xl border border-amber-100">
-                <div className="w-2 h-2 bg-amber-500 rounded-full flex-shrink-0" />
-                <span className="text-sm text-amber-700">{m}</span>
-              </div>
-            ))}
+            {loadingEx
+              ? <div className="space-y-2">{[1,2].map(i => <div key={i} className="h-10 bg-amber-50 rounded-2xl animate-pulse" />)}</div>
+              : v.maintenanceRecords?.length
+                ? v.maintenanceRecords.map((m, i) => (
+                    <div key={i} className="flex items-center gap-3 p-3 bg-amber-50 rounded-2xl border border-amber-100">
+                      <div className="w-2 h-2 bg-amber-500 rounded-full flex-shrink-0" />
+                      <span className="text-sm text-amber-700">{m}</span>
+                    </div>
+                  ))
+                : <p className="text-sm text-gray-400">No maintenance records.</p>
+            }
           </div>
         </motion.div>
       </div>

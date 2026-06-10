@@ -1,6 +1,10 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
 import { supabase } from '../lib/supabase';
-import { vehicles, drivers, alerts, dashboardStats } from '../data/mockData';
+import {
+  fetchVehiclesWithDrivers, fetchDrivers, fetchAlerts,
+  subscribeToVehicles, subscribeToAlerts,
+  fetchEvModels, fetchCities, fetchAnalyticsSeries,
+} from '../lib/db';
 
 const AppContext = createContext();
 
@@ -36,6 +40,9 @@ function buildUserMeta(session, profile) {
     .toUpperCase()
     .slice(0, 2);
 
+  // If there's a driver row, get its vehicle_id
+  const vehicle = profile?.drivers?.[0]?.vehicle_id || null;
+
   return {
     id:      session.user.id,
     email,
@@ -43,7 +50,7 @@ function buildUserMeta(session, profile) {
     name:    fullName,
     avatar:  initials || 'U',
     phone:   profile?.phone ?? metadata.phone ?? '',
-    vehicle: role === 'driver' ? 'EV-001' : null,
+    vehicle: role === 'driver' ? vehicle : null,
   };
 }
 
@@ -57,7 +64,7 @@ async function fetchProfile(userId, retries = 4) {
     try {
       const { data, error } = await supabase
         .from('profiles')
-        .select('id, full_name, phone, role, avatar_url')
+        .select('id, full_name, phone, role, avatar_url, drivers(id, vehicle_id)')
         .eq('id', userId)
         .maybeSingle();
 
@@ -93,6 +100,7 @@ async function fetchProfile(userId, retries = 4) {
 
 export const AppProvider = ({ children }) => {
   const [user,          setUser]          = useState(null);
+  const expectedRoleRef = useRef(null);
   const [authLoading,   setAuthLoading]   = useState(true);
   const [actionLoading, setActionLoading] = useState(false);
   const [authError,     setAuthError]     = useState(null);
@@ -100,11 +108,19 @@ export const AppProvider = ({ children }) => {
   const [darkMode,            setDarkMode]            = useState(false);
   const [sidebarOpen,         setSidebarOpen]         = useState(true);
   const [notificationDrawer,  setNotificationDrawer]  = useState(false);
-  const [vehicleList,         setVehicleList]         = useState(vehicles);
-  const [driverList]                                  = useState(drivers);
-  const [alertList]                                   = useState(alerts);
-  const [stats]                                       = useState(dashboardStats);
+  const [vehicleList,         setVehicleList]         = useState([]);
+  const [driverList,          setDriverList]          = useState([]);
+  const [alertList,           setAlertList]           = useState([]);
+  const [stats, setStats] = useState({
+    totalVehicles: 0, activeVehicles: 0, workshopVehicles: 0, totalDrivers: 0,
+    fleetRevenue: 0, energyToday: 0, avgBatteryHealth: 0, chargingVehicles: 0,
+    revenueGrowth: 12.4, energyGrowth: -3.2, healthGrowth: -1.1, activeGrowth: 0,
+  });
+  const [evModels, setEvModels] = useState([]);
+  const [cities, setCities] = useState([]);
+  const [growthStats, setGrowthStats] = useState([]);
   const [selectedVehicle,     setSelectedVehicle]     = useState(null);
+  const [dataLoading,         setDataLoading]         = useState(true);
 
   // ── Session bootstrap ────────────────────────────────────────────────────
   useEffect(() => {
@@ -122,7 +138,24 @@ export const AppProvider = ({ children }) => {
       async (event, session) => {
         if (session) {
           const profile = await fetchProfile(session.user.id);
-          setUser(buildUserMeta(session, profile));
+          const userMeta = buildUserMeta(session, profile);
+
+          if (expectedRoleRef.current && userMeta.role !== expectedRoleRef.current) {
+            setAuthError(
+              expectedRoleRef.current === 'admin'
+                ? 'Admin account does not exist.'
+                : 'Driver account does not exist.'
+            );
+            await supabase.auth.signOut();
+            setUser(null);
+            expectedRoleRef.current = null;
+            setActionLoading(false);
+            setAuthLoading(false);
+            return;
+          }
+
+          setUser(userMeta);
+          expectedRoleRef.current = null;
         } else {
           setUser(null);
         }
@@ -142,27 +175,115 @@ export const AppProvider = ({ children }) => {
     document.documentElement.classList.toggle('dark', darkMode);
   }, [darkMode]);
 
-  // ── Simulated real-time battery changes ──────────────────────────────────
+  const loadData = async () => {
+    setDataLoading(true);
+    const [v, d, a, models, cts, growth] = await Promise.all([
+      fetchVehiclesWithDrivers(),
+      fetchDrivers(),
+      fetchAlerts(),
+      fetchEvModels(),
+      fetchCities(),
+      fetchAnalyticsSeries('general', 'growth'),
+    ]);
+    const mappedDrivers = d.map(driver => {
+      const vehicle = v.find(veh => veh.id === driver.vehicle);
+      return {
+        ...driver,
+        vehicleModel: vehicle ? `${vehicle.manufacturer} ${vehicle.model}` : 'Unassigned'
+      };
+    });
+    setVehicleList(v);
+    setDriverList(mappedDrivers);
+    setAlertList(a);
+    setEvModels(models);
+    setCities(cts);
+    setGrowthStats(growth);
+    setDataLoading(false);
+
+    // Re-sync user.vehicle after data refresh (driver may have been assigned a vehicle)
+    setUser(prev => {
+      if (!prev || prev.role !== 'driver') return prev;
+      const driverRow = d.find(dr => dr.profileId === prev.id);
+      if (!driverRow) return prev;
+      const newVehicle = driverRow.vehicle || null;
+      if (newVehicle === prev.vehicle) return prev; // no change needed
+      return { ...prev, vehicle: newVehicle };
+    });
+  };
+
+  // ── Load data from Supabase + realtime subscriptions ────────────────────
   useEffect(() => {
-    const interval = setInterval(() => {
+    let unsubVehicles, unsubAlerts;
+
+    loadData();
+
+    unsubVehicles = subscribeToVehicles((updatedVehicle) => {
       setVehicleList(prev =>
-        prev.map(v => ({
-          ...v,
-          speed:
-            v.status === 'running'
-              ? Math.max(20, Math.min(80, v.speed + (Math.random() - 0.5) * 8))
-              : v.speed,
-          batteryPercent:
-            v.status === 'running'
-              ? Math.max(10, v.batteryPercent - 0.1)
-              : v.status === 'charging'
-              ? Math.min(100, v.batteryPercent + 0.2)
-              : v.batteryPercent,
-        }))
+        prev.map(v => {
+          if (v.id === updatedVehicle.id) {
+            return {
+              ...v,
+              ...updatedVehicle,
+              driver: updatedVehicle.driver || v.driver,
+              driverId: updatedVehicle.driverId || v.driverId,
+              serviceHistory: updatedVehicle.serviceHistory?.length ? updatedVehicle.serviceHistory : v.serviceHistory,
+              maintenanceRecords: updatedVehicle.maintenanceRecords?.length ? updatedVehicle.maintenanceRecords : v.maintenanceRecords,
+            };
+          }
+          return v;
+        })
       );
-    }, 3000);
-    return () => clearInterval(interval);
+    });
+
+    // Realtime: refresh alerts list on any alert change
+    unsubAlerts = subscribeToAlerts(async () => {
+      const fresh = await fetchAlerts();
+      setAlertList(fresh);
+    });
+
+    return () => {
+      unsubVehicles?.();
+      unsubAlerts?.();
+    };
   }, []);
+
+  // Compute stats dynamically from vehicle and driver lists + db growth metrics
+  useEffect(() => {
+    if (vehicleList.length === 0) return;
+    const totalVehicles = vehicleList.length;
+    const activeVehicles = vehicleList.filter(v => v.status === 'running').length;
+    const workshopVehicles = vehicleList.filter(v => v.status === 'workshop').length;
+    const chargingVehicles = vehicleList.filter(v => v.status === 'charging').length;
+    const totalDrivers = driverList.length;
+    
+    const avgBatteryHealth = Math.round(
+      vehicleList.reduce((s, v) => s + (v.batteryHealth || 0), 0) / (totalVehicles || 1)
+    );
+    
+    const fleetRevenue = Math.round(
+      vehicleList.reduce((s, v) => s + (v.revenue || 0), 0)
+    );
+
+    const revGrowthPt = growthStats.find(g => g.period_type === 'weekly' && g.metric_type === 'revenueGrowth');
+    const energyGrowthPt = growthStats.find(g => g.period_type === 'weekly' && g.metric_type === 'energyGrowth');
+    const healthGrowthPt = growthStats.find(g => g.period_type === 'weekly' && g.metric_type === 'healthGrowth');
+    const activeGrowthPt = growthStats.find(g => g.period_type === 'weekly' && g.metric_type === 'activeGrowth');
+
+    setStats(prev => ({
+      ...prev,
+      totalVehicles,
+      activeVehicles,
+      workshopVehicles,
+      chargingVehicles,
+      totalDrivers,
+      avgBatteryHealth,
+      fleetRevenue,
+      revenueGrowth: revGrowthPt ? parseFloat(revGrowthPt.value) : prev.revenueGrowth,
+      energyGrowth: energyGrowthPt ? parseFloat(energyGrowthPt.value) : prev.energyGrowth,
+      healthGrowth: healthGrowthPt ? parseFloat(healthGrowthPt.value) : prev.healthGrowth,
+      activeGrowth: activeGrowthPt ? parseFloat(activeGrowthPt.value) : prev.activeGrowth,
+    }));
+  }, [vehicleList, driverList, growthStats]);
 
   // ── Auth actions ──────────────────────────────────────────────────────────
 
@@ -170,13 +291,15 @@ export const AppProvider = ({ children }) => {
    * Sign in — role always resolved from the profiles table (or user_metadata
    * fallback). The role selector on the login page is purely cosmetic.
    */
-  const login = async (email, password) => {
+  const login = async (email, password, expectedRole) => {
     setActionLoading(true);
     setAuthError(null);
+    expectedRoleRef.current = expectedRole;
     const { error } = await supabase.auth.signInWithPassword({ email, password });
     if (error) {
       setAuthError(error.message);
       setActionLoading(false);
+      expectedRoleRef.current = null;
       return { error: error.message };
     }
     // setUser is handled by onAuthStateChange → no duplicate work here
@@ -243,12 +366,14 @@ export const AppProvider = ({ children }) => {
         loading: actionLoading,
         authError,
         login, register, logout, forgotPassword, clearAuthError,
+        dataLoading,
         darkMode, setDarkMode,
         sidebarOpen, setSidebarOpen,
         notificationDrawer, setNotificationDrawer,
         vehicleList, driverList, alertList, stats,
         selectedVehicle, setSelectedVehicle,
-        unreadAlerts,
+        unreadAlerts, evModels, cities, growthStats,
+        refreshData: loadData,
       }}
     >
       {children}

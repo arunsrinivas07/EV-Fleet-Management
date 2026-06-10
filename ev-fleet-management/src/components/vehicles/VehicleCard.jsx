@@ -1,6 +1,6 @@
 import React from 'react';
 import { motion } from 'framer-motion';
-import { MapPin, Gauge, DollarSign, Navigation } from 'lucide-react';
+import { MapPin, Gauge, IndianRupee, Navigation } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import BatteryRing from '../shared/BatteryRing';
 import StatusBadge from '../shared/StatusBadge';
@@ -72,7 +72,7 @@ export default function VehicleCard({ vehicle: v, delay = 0 }) {
           <StatItem icon={MapPin} label="Location" value={v.location} small />
           <StatItem icon={Navigation} label="Range" value={`${Math.round(v.range)} km`} />
           <StatItem icon={Gauge} label="Speed" value={`${Math.round(v.speed)} km/h`} />
-          <StatItem icon={DollarSign} label="Revenue" value={`₹${v.revenue.toLocaleString()}`} />
+          <StatItem icon={IndianRupee} label="Revenue" value={`₹${v.revenue.toLocaleString()}`} />
         </div>
 
         {/* Battery health */}

@@ -1,24 +1,22 @@
 import React, { useState, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Car, Users, Wrench, DollarSign, Zap, Activity, Battery, BatteryCharging } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
-import {
-  revenueByPeriod, statsByPeriod,
-  allBrands, vehicles as allVehicles,
-} from '../../data/mockData';
+import { fetchAnalyticsSeries } from '../../lib/db';
+import { Car, Activity, Wrench, Users, IndianRupee, Zap, Battery, BatteryCharging } from 'lucide-react';
 import StatCard from '../../components/shared/StatCard';
 import VehicleCard from '../../components/vehicles/VehicleCard';
 import LiveMapSection from '../../components/map/LiveMapSection';
 import MiniRevenueChart from '../../components/charts/MiniRevenueChart';
 import DashboardFilters from '../../components/shared/DashboardFilters';
+import LoadingSkeleton from '../../components/shared/LoadingSkeleton';
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
 /** Return the vehicle-id dropdown options filtered by brand */
-function vehicleOptions(brand) {
+function vehicleOptions(brand, vehicleList) {
   const base = brand === 'All Brands'
-    ? allVehicles
-    : allVehicles.filter(v => v.manufacturer === brand);
+    ? vehicleList
+    : vehicleList.filter(v => v.manufacturer === brand);
   return ['All Vehicles', ...base.map(v => `${v.id} – ${v.model}`)];
 }
 
@@ -31,7 +29,20 @@ function parseVehicleId(opt) {
 // ── component ────────────────────────────────────────────────────────────────
 
 export default function AdminDashboard() {
-  const { stats, vehicleList, user } = useApp();
+  const { stats, vehicleList, user, dataLoading, driverList } = useApp();
+  const [revenueSeries, setRevenueSeries] = useState([]);
+  const [growthSeries, setGrowthSeries] = useState([]);
+
+  // Fetch series on mount
+  React.useEffect(() => {
+    Promise.all([
+      fetchAnalyticsSeries('fleet', 'All'),
+      fetchAnalyticsSeries('general', 'growth')
+    ]).then(([rev, gro]) => {
+      setRevenueSeries(rev);
+      setGrowthSeries(gro);
+    });
+  }, []);
 
   // Filter state
   const [filters, setFilters] = useState({
@@ -40,8 +51,12 @@ export default function AdminDashboard() {
     vehicle: 'All Vehicles',
   });
 
+  const allBrands = useMemo(() => {
+    return ['All Brands', ...new Set(vehicleList.map(v => v.manufacturer))];
+  }, [vehicleList]);
+
   // Derived vehicle options (brand-aware)
-  const vehicleOpts = useMemo(() => vehicleOptions(filters.brand), [filters.brand]);
+  const vehicleOpts = useMemo(() => vehicleOptions(filters.brand, vehicleList), [filters.brand, vehicleList]);
 
   // Filtered vehicle list for fleet cards + map
   const filteredVehicles = useMemo(() => {
@@ -55,12 +70,38 @@ export default function AdminDashboard() {
   }, [vehicleList, filters.brand, filters.vehicle]);
 
   // Period-specific stats & chart data
-  const periodKey    = filters.period.toLowerCase();
-  const periodStats  = statsByPeriod[periodKey]  ?? statsByPeriod.weekly;
-  const chartData    = revenueByPeriod[periodKey] ?? revenueByPeriod.weekly;
+  const periodKey    = filters.period === 'Last 3 Mo' ? 'last3months' : filters.period.toLowerCase();
+
+  const periodStats = useMemo(() => {
+    const periodPoints = growthSeries.filter(pt => pt.period_type === periodKey);
+    const fleetRevenuePt = periodPoints.find(pt => pt.metric_type === 'fleetRevenue');
+    const energyTodayPt = periodPoints.find(pt => pt.metric_type === 'energyToday');
+    const revenueGrowthPt = periodPoints.find(pt => pt.metric_type === 'revenueGrowth');
+    const energyGrowthPt = periodPoints.find(pt => pt.metric_type === 'energyGrowth');
+    return {
+      fleetRevenue: fleetRevenuePt ? parseFloat(fleetRevenuePt.value) : 0,
+      energyToday: energyTodayPt ? parseFloat(energyTodayPt.value) : 0,
+      revenueGrowth: revenueGrowthPt ? parseFloat(revenueGrowthPt.value) : 0,
+      energyGrowth: energyGrowthPt ? parseFloat(energyGrowthPt.value) : 0,
+    };
+  }, [growthSeries, periodKey]);
+
+  const chartData = useMemo(() => {
+    const periodPoints = revenueSeries.filter(pt => pt.period_type === periodKey);
+    const labels = [...new Set(periodPoints.map(pt => pt.period_label))];
+    return labels.map(label => {
+      const revPt = periodPoints.find(pt => pt.period_label === label && pt.metric_type === 'revenue');
+      const tgtPt = periodPoints.find(pt => pt.period_label === label && pt.metric_type === 'target');
+      return {
+        label,
+        revenue: revPt ? parseFloat(revPt.value) : 0,
+        target: tgtPt ? parseFloat(tgtPt.value) : 0,
+      };
+    });
+  }, [revenueSeries, periodKey]);
 
   // Scale the revenue/energy stats when a specific brand/vehicle is selected
-  const scale = filteredVehicles.length / (allVehicles.length || 1);
+  const scale = filteredVehicles.length / (vehicleList.length || 1);
   const scaledRevenue = filters.brand === 'All Brands' && filters.vehicle === 'All Vehicles'
     ? periodStats.fleetRevenue
     : Math.round(periodStats.fleetRevenue * scale);
@@ -68,16 +109,19 @@ export default function AdminDashboard() {
     ? periodStats.energyToday
     : Math.round(periodStats.energyToday * scale * 10) / 10;
 
+  const unassignedDriverCount = driverList.filter(d => !d.vehicle).length;
+
+
   // Stat cards
   const statCards = [
-    { title: 'Total EV Vehicles',  value: filteredVehicles.length,                                    icon: Car,             trend: 0,                       trendLabel: 'In selected filter',     gradient: 'gradient-green',  delay: 0    },
-    { title: 'Active Vehicles',    value: filteredVehicles.filter(v => v.status === 'running').length, icon: Activity,        trend: stats.activeGrowth,      trendLabel: 'Currently on road',      gradient: 'gradient-blue',   delay: 0.05 },
-    { title: 'In Workshop',        value: filteredVehicles.filter(v => v.status === 'workshop').length,icon: Wrench,          trend: 0,                       trendLabel: 'Under maintenance',      gradient: 'gradient-orange', delay: 0.1  },
-    { title: 'Total Drivers',      value: filteredVehicles.length,                                    icon: Users,           trend: 0,                       trendLabel: 'Assigned drivers',       gradient: 'gradient-purple', delay: 0.15 },
-    { title: 'Fleet Revenue',      value: scaledRevenue,                                              icon: DollarSign,      trend: periodStats.revenueGrowth,trendLabel: `vs last ${filters.period.toLowerCase()}`, gradient: 'gradient-teal',   delay: 0.2,  prefix: '₹' },
-    { title: `Energy (${filters.period})`, value: scaledEnergy,                                      icon: Zap,             trend: periodStats.energyGrowth, trendLabel: 'kWh consumed',           gradient: 'gradient-blue',   delay: 0.25, suffix: ' kWh' },
-    { title: 'Avg Battery Health', value: filteredVehicles.length ? Math.round(filteredVehicles.reduce((s, v) => s + v.batteryHealth, 0) / filteredVehicles.length) : 0, icon: Battery, trend: stats.healthGrowth, trendLabel: 'Fleet average', gradient: 'gradient-green', delay: 0.3, suffix: '%' },
-    { title: 'Charging Now',       value: filteredVehicles.filter(v => v.status === 'charging').length,icon: BatteryCharging, trend: 0,                       trendLabel: 'At charging stations',   gradient: 'gradient-teal',   delay: 0.35 },
+    { title: 'Total EV Vehicles',    value: filteredVehicles.length,                                    icon: Car,             trend: 0,                       trendLabel: 'In selected filter',                         gradient: 'gradient-green',  delay: 0    },
+    { title: 'Active Vehicles',      value: filteredVehicles.filter(v => v.status === 'running').length, icon: Activity,        trend: stats.activeGrowth,      trendLabel: 'Currently on road',                          gradient: 'gradient-blue',   delay: 0.05 },
+    { title: 'In Workshop',          value: filteredVehicles.filter(v => v.status === 'workshop').length,icon: Wrench,          trend: 0,                       trendLabel: 'Under maintenance',                          gradient: 'gradient-orange', delay: 0.1  },
+    { title: 'Total Drivers',        value: stats.totalDrivers,                                         icon: Users,           trend: 0,                       trendLabel: `${unassignedDriverCount} awaiting assignment`, gradient: 'gradient-purple', delay: 0.15 },
+    { title: 'Fleet Revenue',        value: scaledRevenue,                                              icon: IndianRupee,      trend: periodStats.revenueGrowth,trendLabel: `vs last ${filters.period.toLowerCase()}`,     gradient: 'gradient-teal',   delay: 0.2,  prefix: '₹' },
+    { title: `Energy (${filters.period})`, value: scaledEnergy,                                        icon: Zap,             trend: periodStats.energyGrowth, trendLabel: 'kWh consumed',                               gradient: 'gradient-blue',   delay: 0.25, suffix: ' kWh' },
+    { title: 'Avg Battery Health',   value: filteredVehicles.length ? Math.round(filteredVehicles.reduce((s, v) => s + v.batteryHealth, 0) / filteredVehicles.length) : 0, icon: Battery, trend: stats.healthGrowth, trendLabel: 'Fleet average', gradient: 'gradient-green', delay: 0.3, suffix: '%' },
+    { title: 'Charging Now',         value: filteredVehicles.filter(v => v.status === 'charging').length,icon: BatteryCharging, trend: 0,                       trendLabel: 'At charging stations',                       gradient: 'gradient-teal',   delay: 0.35 },
   ];
 
   const greetingHour = new Date().getHours();
@@ -105,6 +149,31 @@ export default function AdminDashboard() {
             <span className="text-sm font-semibold text-emerald-700">Live Monitoring Active</span>
           </div>
         </div>
+
+        {/* Pending driver assignment banner */}
+        <AnimatePresence>
+          {unassignedDriverCount > 0 && (
+            <motion.div
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: 'auto' }}
+              exit={{ opacity: 0, height: 0 }}
+              className="flex items-center justify-between gap-3 p-3 bg-amber-50 border border-amber-200 rounded-2xl overflow-hidden"
+            >
+              <div className="flex items-center gap-2">
+                <Users className="w-4 h-4 text-amber-600 flex-shrink-0" />
+                <p className="text-sm font-semibold text-amber-700">
+                  {unassignedDriverCount} driver{unassignedDriverCount !== 1 ? 's' : ''} waiting for vehicle assignment
+                </p>
+              </div>
+              <button
+                onClick={() => document.querySelector('[aria-label="assign-vehicle"]')?.click()}
+                className="text-xs font-bold text-amber-700 bg-amber-100 hover:bg-amber-200 px-3 py-1.5 rounded-xl transition-colors whitespace-nowrap"
+              >
+                Assign Now →
+              </button>
+            </motion.div>
+          )}
+        </AnimatePresence>
 
         {/* Filter bar */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 bg-white rounded-2xl border border-gray-100 shadow-sm">
@@ -141,7 +210,7 @@ export default function AdminDashboard() {
                 </span>
               )}
               <span className="text-xs text-gray-400">
-                Showing {filteredVehicles.length} of {allVehicles.length} vehicles
+                Showing {filteredVehicles.length} of {vehicleList.length} vehicles
               </span>
             </motion.div>
           )}
@@ -149,11 +218,15 @@ export default function AdminDashboard() {
       </motion.div>
 
       {/* ── Stats Grid ────────────────────────────────────────────────────── */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        {statCards.map((card) => (
-          <StatCard key={card.title} {...card} />
-        ))}
-      </div>
+      {dataLoading ? (
+        <LoadingSkeleton type="card" count={8} />
+      ) : (
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+          {statCards.map((card) => (
+            <StatCard key={card.title} {...card} />
+          ))}
+        </div>
+      )}
 
       {/* ── Revenue Chart + Quick panels ──────────────────────────────────── */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -170,12 +243,13 @@ export default function AdminDashboard() {
         </div>
       </div>
 
+
       {/* ── Live Fleet Cards ──────────────────────────────────────────────── */}
       <div>
         <div className="flex items-center justify-between mb-4">
           <div>
             <h3 className="text-lg font-bold text-gray-800">Live Fleet Overview</h3>
-            {filteredVehicles.length < allVehicles.length && (
+            {filteredVehicles.length < vehicleList.length && (
               <p className="text-xs text-gray-400 mt-0.5">{filteredVehicles.length} vehicles match current filter</p>
             )}
           </div>
@@ -286,3 +360,5 @@ function FleetHealth({ vehicleList }) {
     </motion.div>
   );
 }
+
+

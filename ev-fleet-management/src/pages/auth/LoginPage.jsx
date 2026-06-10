@@ -5,7 +5,7 @@ import { Eye, EyeOff, Zap, Mail, Lock, User, Shield, AlertCircle } from 'lucide-
 import { useApp } from '../../context/AppContext';
 
 export default function LoginPage() {
-  const { login, loading, authError, clearAuthError, user } = useApp();
+  const { login, loading, authError, clearAuthError, user, logout } = useApp();
   const navigate = useNavigate();
 
   const [form, setForm] = useState({
@@ -16,13 +16,19 @@ export default function LoginPage() {
   const [showPass, setShowPass] = useState(false);
   // role picker is UI-only — just pre-fills the demo email
   const [roleHint, setRoleHint] = useState('admin');
+  const [localError, setLocalError] = useState(null);
 
-  // Clear any stale error when the user starts typing
-  useEffect(() => { if (authError) clearAuthError(); }, [form.email, form.password]);
+  // Clear any stale error when the user starts typing or changes role
+  useEffect(() => {
+    if (authError) clearAuthError();
+    if (localError) setLocalError(null);
+  }, [form.email, form.password, roleHint]);
 
   // Navigate once user is set (by onAuthStateChange inside AppContext)
   useEffect(() => {
-    if (user) navigate(user.role === 'admin' ? '/admin' : '/driver', { replace: true });
+    if (user) {
+      navigate(user.role === 'admin' ? '/admin' : '/driver', { replace: true });
+    }
   }, [user]);
 
   const handleRoleHint = (role) => {
@@ -35,7 +41,7 @@ export default function LoginPage() {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    await login(form.email, form.password);
+    await login(form.email, form.password, roleHint);
     // Navigation is handled by the useEffect above once `user` is populated
   };
 
@@ -55,8 +61,8 @@ export default function LoginPage() {
               <Zap className="w-6 h-6 text-white" />
             </div>
             <div>
-              <h1 className="text-xl font-bold text-gray-800">EV Fleet Pro</h1>
-              <p className="text-xs text-gray-500">Management System</p>
+              <h1 className="text-xl font-bold text-gray-800">IntelliEV</h1>
+              <p className="text-xs text-gray-500">Fleet Management System</p>
             </div>
           </div>
 
@@ -86,7 +92,7 @@ export default function LoginPage() {
 
           {/* Error banner */}
           <AnimatePresence>
-            {authError && (
+            {(authError || localError) && (
               <motion.div
                 initial={{ opacity: 0, y: -8, height: 0 }}
                 animate={{ opacity: 1, y: 0, height: 'auto' }}
@@ -94,7 +100,7 @@ export default function LoginPage() {
                 className="mb-4 flex items-start gap-3 bg-red-50 border border-red-200 text-red-700 rounded-2xl px-4 py-3 text-sm overflow-hidden"
               >
                 <AlertCircle className="w-4 h-4 mt-0.5 flex-shrink-0" />
-                <span>{authError}</span>
+                <span>{authError || localError}</span>
               </motion.div>
             )}
           </AnimatePresence>
@@ -180,15 +186,7 @@ export default function LoginPage() {
             </Link>
           </p>
 
-          {/* Demo hint */}
-          <div className="mt-6 p-4 bg-emerald-50 rounded-2xl border border-emerald-100">
-            <p className="text-xs font-semibold text-emerald-700 mb-1">Demo Credentials</p>
-            <p className="text-xs text-emerald-600">Admin: admin@evfleet.com</p>
-            <p className="text-xs text-emerald-600">Driver: driver@evfleet.com</p>
-            <p className="text-xs text-emerald-400 mt-1">
-              Create these accounts in your Supabase project first.
-            </p>
-          </div>
+          
         </motion.div>
       </div>
 

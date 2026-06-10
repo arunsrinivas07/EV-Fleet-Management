@@ -76,7 +76,7 @@ export default function RegisterPage() {
 
           <div className="bg-emerald-50 border border-emerald-100 rounded-2xl p-4 text-left mb-8 space-y-1.5">
             {[
-              'Open the email from EV Fleet Pro',
+              'Open the email from IntelliEV',
               'Click the "Confirm your email" button',
               'You\'ll be redirected back to sign in',
             ].map((step, i) => (
@@ -127,13 +127,13 @@ export default function RegisterPage() {
               <Zap className="w-5 h-5 text-white" />
             </div>
             <div>
-              <h1 className="text-lg font-bold text-gray-800">EV Fleet Pro</h1>
+              <h1 className="text-lg font-bold text-gray-800">IntelliEV</h1>
               <p className="text-xs text-gray-500">Create your account</p>
             </div>
           </div>
 
           <h2 className="text-2xl font-bold text-gray-800 mb-1">Get Started</h2>
-          <p className="text-gray-500 text-sm mb-6">Create your EV Fleet account today</p>
+          <p className="text-gray-500 text-sm mb-6">Create your IntelliEV account today</p>
 
           {/* Role selector */}
           <div className="flex gap-3 mb-6 p-1 bg-gray-100 rounded-2xl">
