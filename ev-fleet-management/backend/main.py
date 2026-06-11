@@ -187,6 +187,7 @@ async def predict(req: PredictRequest):
             road_type            = road_type,
             brand                = brand,
             model_name           = model_name,
+            trip                 = 0.0,
         )
     except ValueError as exc:
         raise HTTPException(422, str(exc))
@@ -235,6 +236,7 @@ async def predict(req: PredictRequest):
                 road_type            = detected,
                 brand                = brand,
                 model_name           = model_name,
+                trip                 = route["distance_km"],
             )
             base.update(ml)
         except Exception:

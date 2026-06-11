@@ -1,14 +1,16 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useApp } from '../../context/AppContext';
 import { fetchAnalyticsSeries } from '../../lib/db';
-import { Car, Activity, Wrench, Users, IndianRupee, Zap, Battery, BatteryCharging } from 'lucide-react';
+import { supabase } from '../../lib/supabase';
+import { Car, Activity, Wrench, Users, IndianRupee, Zap, Battery, BatteryCharging, UserPlus } from 'lucide-react';
 import StatCard from '../../components/shared/StatCard';
 import VehicleCard from '../../components/vehicles/VehicleCard';
 import LiveMapSection from '../../components/map/LiveMapSection';
 import MiniRevenueChart from '../../components/charts/MiniRevenueChart';
 import DashboardFilters from '../../components/shared/DashboardFilters';
 import LoadingSkeleton from '../../components/shared/LoadingSkeleton';
+import AssignVehiclePanel from '../../components/shared/AssignVehiclePanel';
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -29,14 +31,39 @@ function parseVehicleId(opt) {
 // ── component ────────────────────────────────────────────────────────────────
 
 export default function AdminDashboard() {
-  const { stats, vehicleList, user, dataLoading, driverList } = useApp();
+  const { stats, vehicleList, user, dataLoading, driverList, refreshData } = useApp();
   const [revenueSeries, setRevenueSeries] = useState([]);
   const [growthSeries, setGrowthSeries] = useState([]);
+  const [assignOpen, setAssignOpen] = useState(false);
+  const [livePendingCount, setLivePendingCount] = useState(null);
 
-  // Fetch series on mount
+  // Live pending count — polls Supabase directly every 20 s
+  const fetchPendingCount = useCallback(async () => {
+    try {
+      const { count } = await supabase
+        .from('drivers')
+        .select('id', { count: 'exact', head: true })
+        .is('vehicle_id', null);
+      if (count !== null) setLivePendingCount(count);
+    } catch { /* silent */ }
+  }, []);
+
+  useEffect(() => {
+    fetchPendingCount();
+    const id = setInterval(fetchPendingCount, 20000);
+    return () => clearInterval(id);
+  }, [fetchPendingCount]);
+
+  const unassignedDriverCount = livePendingCount ?? driverList.filter(d => !d.vehicle).length;
+
+  const handleAssignClose = () => {
+    setAssignOpen(false);
+    fetchPendingCount();
+    refreshData();
+  };
   React.useEffect(() => {
     Promise.all([
-      fetchAnalyticsSeries('fleet', 'All'),
+      fetchAnalyticsSeries('fleet', 'all'),
       fetchAnalyticsSeries('general', 'growth')
     ]).then(([rev, gro]) => {
       setRevenueSeries(rev);
@@ -46,8 +73,8 @@ export default function AdminDashboard() {
 
   // Filter state
   const [filters, setFilters] = useState({
-    period:  'Weekly',
-    brand:   'All Brands',
+    period: 'Weekly',
+    brand: 'All Brands',
     vehicle: 'All Vehicles',
   });
 
@@ -70,7 +97,7 @@ export default function AdminDashboard() {
   }, [vehicleList, filters.brand, filters.vehicle]);
 
   // Period-specific stats & chart data
-  const periodKey    = filters.period === 'Last 3 Mo' ? 'last3months' : filters.period.toLowerCase();
+  const periodKey = filters.period === 'Last 3 Mo' ? 'last3months' : filters.period.toLowerCase();
 
   const periodStats = useMemo(() => {
     const periodPoints = growthSeries.filter(pt => pt.period_type === periodKey);
@@ -87,41 +114,53 @@ export default function AdminDashboard() {
   }, [growthSeries, periodKey]);
 
   const chartData = useMemo(() => {
-    const periodPoints = revenueSeries.filter(pt => pt.period_type === periodKey);
+    const targetScopeId = filters.brand === 'All Brands' ? 'All' : filters.brand;
+    const periodPoints = revenueSeries.filter(
+      pt => pt.period_type === periodKey && pt.scope_id === targetScopeId
+    );
+
+    // Scale by vehicle if a specific one is selected
+    const brandVehicles = filters.brand === 'All Brands'
+      ? vehicleList
+      : vehicleList.filter(v => v.manufacturer === filters.brand);
+
+    const vehicleScale = filters.vehicle === 'All Vehicles'
+      ? 1
+      : 1 / (brandVehicles.length || 1);
+
     const labels = [...new Set(periodPoints.map(pt => pt.period_label))];
     return labels.map(label => {
       const revPt = periodPoints.find(pt => pt.period_label === label && pt.metric_type === 'revenue');
       const tgtPt = periodPoints.find(pt => pt.period_label === label && pt.metric_type === 'target');
       return {
         label,
-        revenue: revPt ? parseFloat(revPt.value) : 0,
-        target: tgtPt ? parseFloat(tgtPt.value) : 0,
+        revenue: revPt ? parseFloat(revPt.value) * vehicleScale : 0,
+        target: tgtPt ? parseFloat(tgtPt.value) * vehicleScale : 0,
       };
     });
-  }, [revenueSeries, periodKey]);
+  }, [revenueSeries, periodKey, filters.brand, filters.vehicle, vehicleList]);
 
   // Scale the revenue/energy stats when a specific brand/vehicle is selected
   const scale = filteredVehicles.length / (vehicleList.length || 1);
-  const scaledRevenue = filters.brand === 'All Brands' && filters.vehicle === 'All Vehicles'
-    ? periodStats.fleetRevenue
-    : Math.round(periodStats.fleetRevenue * scale);
+  const totalRevenueFromChart = useMemo(() => {
+    return chartData.reduce((sum, d) => sum + d.revenue, 0);
+  }, [chartData]);
+
+  const scaledRevenue = totalRevenueFromChart;
   const scaledEnergy = filters.brand === 'All Brands' && filters.vehicle === 'All Vehicles'
     ? periodStats.energyToday
     : Math.round(periodStats.energyToday * scale * 10) / 10;
 
-  const unassignedDriverCount = driverList.filter(d => !d.vehicle).length;
-
-
   // Stat cards
   const statCards = [
-    { title: 'Total EV Vehicles',    value: filteredVehicles.length,                                    icon: Car,             trend: 0,                       trendLabel: 'In selected filter',                         gradient: 'gradient-green',  delay: 0    },
-    { title: 'Active Vehicles',      value: filteredVehicles.filter(v => v.status === 'running').length, icon: Activity,        trend: stats.activeGrowth,      trendLabel: 'Currently on road',                          gradient: 'gradient-blue',   delay: 0.05 },
-    { title: 'In Workshop',          value: filteredVehicles.filter(v => v.status === 'workshop').length,icon: Wrench,          trend: 0,                       trendLabel: 'Under maintenance',                          gradient: 'gradient-orange', delay: 0.1  },
-    { title: 'Total Drivers',        value: stats.totalDrivers,                                         icon: Users,           trend: 0,                       trendLabel: `${unassignedDriverCount} awaiting assignment`, gradient: 'gradient-purple', delay: 0.15 },
-    { title: 'Fleet Revenue',        value: scaledRevenue,                                              icon: IndianRupee,      trend: periodStats.revenueGrowth,trendLabel: `vs last ${filters.period.toLowerCase()}`,     gradient: 'gradient-teal',   delay: 0.2,  prefix: '₹' },
-    { title: `Energy (${filters.period})`, value: scaledEnergy,                                        icon: Zap,             trend: periodStats.energyGrowth, trendLabel: 'kWh consumed',                               gradient: 'gradient-blue',   delay: 0.25, suffix: ' kWh' },
-    { title: 'Avg Battery Health',   value: filteredVehicles.length ? Math.round(filteredVehicles.reduce((s, v) => s + v.batteryHealth, 0) / filteredVehicles.length) : 0, icon: Battery, trend: stats.healthGrowth, trendLabel: 'Fleet average', gradient: 'gradient-green', delay: 0.3, suffix: '%' },
-    { title: 'Charging Now',         value: filteredVehicles.filter(v => v.status === 'charging').length,icon: BatteryCharging, trend: 0,                       trendLabel: 'At charging stations',                       gradient: 'gradient-teal',   delay: 0.35 },
+    { title: 'Total EV Vehicles', value: filteredVehicles.length, icon: Car, trend: 0, trendLabel: 'In selected filter', gradient: 'gradient-green', delay: 0 },
+    { title: 'Active Vehicles', value: filteredVehicles.filter(v => v.status === 'running').length, icon: Activity, trend: stats.activeGrowth, trendLabel: 'Currently on road', gradient: 'gradient-blue', delay: 0.05 },
+    { title: 'In Workshop', value: filteredVehicles.filter(v => v.status === 'workshop').length, icon: Wrench, trend: 0, trendLabel: 'Under maintenance', gradient: 'gradient-orange', delay: 0.1 },
+    { title: 'Total Drivers', value: stats.totalDrivers, icon: Users, trend: 0, trendLabel: `${unassignedDriverCount} awaiting assignment`, gradient: 'gradient-purple', delay: 0.15 },
+    { title: 'Fleet Revenue', value: scaledRevenue, icon: IndianRupee, trend: periodStats.revenueGrowth, trendLabel: `vs last ${filters.period.toLowerCase()}`, gradient: 'gradient-teal', delay: 0.2, prefix: '₹' },
+    { title: `Energy (${filters.period})`, value: scaledEnergy, icon: Zap, trend: periodStats.energyGrowth, trendLabel: 'kWh consumed', gradient: 'gradient-blue', delay: 0.25, suffix: ' kWh' },
+    { title: 'Avg Battery Health', value: filteredVehicles.length ? Math.round(filteredVehicles.reduce((s, v) => s + v.batteryHealth, 0) / filteredVehicles.length) : 0, icon: Battery, trend: stats.healthGrowth, trendLabel: 'Fleet average', gradient: 'gradient-green', delay: 0.3, suffix: '%' },
+    { title: 'Charging Now', value: filteredVehicles.filter(v => v.status === 'charging').length, icon: BatteryCharging, trend: 0, trendLabel: 'At charging stations', gradient: 'gradient-teal', delay: 0.35 },
   ];
 
   const greetingHour = new Date().getHours();
@@ -140,7 +179,7 @@ export default function AdminDashboard() {
         <div className="flex items-center justify-between flex-wrap gap-3">
           <div>
             <h2 className="text-2xl font-bold text-gray-800">
-              {greeting}, {user?.name?.split(' ')[0]} 👋
+              {greeting}, {user?.name?.split(' ')[0]}
             </h2>
             <p className="text-gray-500 mt-1 text-sm">Here's what's happening with your fleet.</p>
           </div>
@@ -166,9 +205,10 @@ export default function AdminDashboard() {
                 </p>
               </div>
               <button
-                onClick={() => document.querySelector('[aria-label="assign-vehicle"]')?.click()}
-                className="text-xs font-bold text-amber-700 bg-amber-100 hover:bg-amber-200 px-3 py-1.5 rounded-xl transition-colors whitespace-nowrap"
+                onClick={() => setAssignOpen(true)}
+                className="text-xs font-bold text-amber-700 bg-amber-100 hover:bg-amber-200 px-3 py-1.5 rounded-xl transition-colors whitespace-nowrap flex items-center gap-1"
               >
+                <UserPlus className="w-3 h-3" />
                 Assign Now →
               </button>
             </motion.div>
@@ -289,6 +329,9 @@ export default function AdminDashboard() {
 
       {/* ── Map ───────────────────────────────────────────────────────────── */}
       <LiveMapSection filteredVehicles={filteredVehicles} />
+
+      {/* Assign Vehicle panel — also accessible from the banner */}
+      <AssignVehiclePanel open={assignOpen} onClose={handleAssignClose} />
     </div>
   );
 }
@@ -332,10 +375,10 @@ function FleetHealth({ vehicleList }) {
   }, {});
 
   const statusItems = [
-    { label: 'Running',  key: 'running',  color: 'bg-emerald-500', text: 'text-emerald-700', bg: 'bg-emerald-50' },
-    { label: 'Charging', key: 'charging', color: 'bg-blue-500',    text: 'text-blue-700',    bg: 'bg-blue-50'    },
-    { label: 'Idle',     key: 'idle',     color: 'bg-amber-500',   text: 'text-amber-700',   bg: 'bg-amber-50'   },
-    { label: 'Workshop', key: 'workshop', color: 'bg-red-500',     text: 'text-red-700',     bg: 'bg-red-50'     },
+    { label: 'Running', key: 'running', color: 'bg-emerald-500', text: 'text-emerald-700', bg: 'bg-emerald-50' },
+    { label: 'Charging', key: 'charging', color: 'bg-blue-500', text: 'text-blue-700', bg: 'bg-blue-50' },
+    { label: 'Idle', key: 'idle', color: 'bg-amber-500', text: 'text-amber-700', bg: 'bg-amber-50' },
+    { label: 'Workshop', key: 'workshop', color: 'bg-red-500', text: 'text-red-700', bg: 'bg-red-50' },
   ];
 
   return (

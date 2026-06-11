@@ -1,7 +1,8 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { Search, Bell, Sun, Moon, Settings, ChevronDown, UserPlus, RefreshCw } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
+import { supabase } from '../../lib/supabase';
 import AssignVehiclePanel from '../shared/AssignVehiclePanel';
 
 export default function Navbar({ title }) {
@@ -9,9 +10,40 @@ export default function Navbar({ title }) {
   const [searchFocus,   setSearchFocus]   = useState(false);
   const [assignOpen,    setAssignOpen]    = useState(false);
   const [refreshing,    setRefreshing]    = useState(false);
+  const [livePendingCount, setLivePendingCount] = useState(null);
 
   const isAdmin = user?.role === 'admin';
-  const pendingCount = driverList.filter(d => !d.vehicle).length;
+
+  // Live pending count — query Supabase directly so new registrations show immediately
+  const fetchLiveCount = async () => {
+    if (!isAdmin) return;
+    try {
+      const { count } = await supabase
+        .from('drivers')
+        .select('id', { count: 'exact', head: true })
+        .is('vehicle_id', null);
+      if (count !== null) setLivePendingCount(count);
+    } catch {
+      // fall back to driverList count silently
+    }
+  };
+
+  // Fetch on mount and every 30 s
+  useEffect(() => {
+    if (!isAdmin) return;
+    fetchLiveCount();
+    const interval = setInterval(fetchLiveCount, 30000);
+    return () => clearInterval(interval);
+  }, [isAdmin]);
+
+  // Re-fetch when panel closes (assignment may have happened)
+  const handlePanelClose = () => {
+    setAssignOpen(false);
+    fetchLiveCount();
+    refreshData();
+  };
+
+  const pendingCount = livePendingCount ?? driverList.filter(d => !d.vehicle).length;
 
   const handleRefresh = async () => {
     setRefreshing(true);
@@ -137,7 +169,7 @@ export default function Navbar({ title }) {
       </header>
 
       {/* Assign Vehicle slide-in panel */}
-      <AssignVehiclePanel open={assignOpen} onClose={() => setAssignOpen(false)} />
+      <AssignVehiclePanel open={assignOpen} onClose={handlePanelClose} />
     </>
   );
 }

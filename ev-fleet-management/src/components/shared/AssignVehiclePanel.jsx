@@ -1,25 +1,53 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, Car, ChevronDown, CheckCircle, UserPlus, Zap, AlertCircle } from 'lucide-react';
+import { X, Car, ChevronDown, CheckCircle, UserPlus, Zap, AlertCircle, RefreshCw } from 'lucide-react';
 import { assignVehicleToDriver } from '../../lib/db';
+import { supabase } from '../../lib/supabase';
 import { useApp } from '../../context/AppContext';
 
 export default function AssignVehiclePanel({ open, onClose }) {
   const { vehicleList, driverList, refreshData } = useApp();
   const [selectedDriver, setSelectedDriver] = useState(null);
   const [selectedVehicle, setSelectedVehicle] = useState(null);
-  const [driverOpen, setDriverOpen] = useState(false);
   const [vehicleOpen, setVehicleOpen] = useState(false);
   const [justAssigned, setJustAssigned] = useState(null);
   const [errorMsg, setErrorMsg] = useState(null);
+  const [refreshing, setRefreshing] = useState(false);
 
-  const pendingDrivers = driverList.filter(d => !d.vehicle);
-  const allocatedVehicleIds = driverList.map(d => d.vehicle).filter(Boolean);
-  const availableVehicles = vehicleList.filter(v => !allocatedVehicleIds.includes(v.id));
+  // Live pending drivers — fetched directly from Supabase so new sign-ups appear immediately
+  const [livePendingDrivers, setLivePendingDrivers] = useState([]);
 
-  // Reset state when panel opens/closes
-  React.useEffect(() => {
-    if (!open) {
+  const fetchPendingDrivers = async () => {
+    setRefreshing(true);
+    try {
+      const { data, error } = await supabase
+        .from('drivers')
+        .select('id, profile_id, name, vehicle_id, avatar, created_at')
+        .is('vehicle_id', null)
+        .order('created_at', { ascending: false });
+      if (!error && data) {
+        setLivePendingDrivers(data.map(d => ({
+          id:     d.id,
+          profileId: d.profile_id,
+          name:   d.name,
+          avatar: d.avatar || d.name?.split(' ').map(w => w[0]).join('').toUpperCase() || 'XX',
+          email:  d.email || `${d.name?.toLowerCase().replace(/\s+/g, '')}@evfleet.in`,
+          joined: d.created_at
+            ? new Date(d.created_at).toLocaleDateString('en-IN', { month: 'short', year: 'numeric' })
+            : 'Jun 2026',
+        })));
+      }
+    } catch (e) {
+      console.error('fetchPendingDrivers', e);
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
+  // Fetch fresh pending drivers whenever panel opens
+  useEffect(() => {
+    if (open) {
+      fetchPendingDrivers();
       setSelectedDriver(null);
       setSelectedVehicle(null);
       setVehicleOpen(false);
@@ -29,22 +57,33 @@ export default function AssignVehiclePanel({ open, onClose }) {
   }, [open]);
 
   // Clear errors when selection changes
-  React.useEffect(() => {
-    setErrorMsg(null);
-  }, [selectedDriver, selectedVehicle]);
+  useEffect(() => { setErrorMsg(null); }, [selectedDriver, selectedVehicle]);
+
+  // Available vehicles — those not assigned to any driver
+  const allocatedVehicleIds = driverList.map(d => d.vehicle).filter(Boolean);
+  const availableVehicles = vehicleList.filter(v => !allocatedVehicleIds.includes(v.id));
+
+  const pendingDrivers = livePendingDrivers.length > 0
+    ? livePendingDrivers
+    : driverList.filter(d => !d.vehicle).map(d => ({
+        id:     d.id,
+        name:   d.name,
+        avatar: d.avatar,
+        joined: d.joined,
+      }));
 
   const handleAssign = async () => {
     if (!selectedDriver || !selectedVehicle) return;
     setErrorMsg(null);
-    // Persist to Supabase
     const res = await assignVehicleToDriver(selectedDriver.id, selectedVehicle.id);
     if (res.success) {
       setJustAssigned({ driver: selectedDriver, vehicle: selectedVehicle });
       await refreshData();
+      await fetchPendingDrivers(); // re-fetch so assigned driver disappears
       setSelectedDriver(null);
       setSelectedVehicle(null);
     } else {
-      setErrorMsg(res.error || 'Failed to assign vehicle.');
+      setErrorMsg(res.error || 'Failed to assign vehicle. Check Supabase RLS policies.');
     }
     setTimeout(() => setJustAssigned(null), 3500);
   };
@@ -77,9 +116,19 @@ export default function AssignVehiclePanel({ open, onClose }) {
                   <p className="text-xs text-gray-400">{pendingDrivers.length} driver{pendingDrivers.length !== 1 ? 's' : ''} waiting</p>
                 </div>
               </div>
-              <button onClick={onClose} className="p-2 hover:bg-gray-100 rounded-xl transition-colors">
-                <X className="w-5 h-5 text-gray-500" />
-              </button>
+              <div className="flex items-center gap-1">
+                <button
+                  onClick={fetchPendingDrivers}
+                  disabled={refreshing}
+                  title="Refresh driver list"
+                  className="p-2 hover:bg-gray-100 rounded-xl transition-colors"
+                >
+                  <RefreshCw className={`w-4 h-4 text-gray-500 ${refreshing ? 'animate-spin' : ''}`} />
+                </button>
+                <button onClick={onClose} className="p-2 hover:bg-gray-100 rounded-xl transition-colors">
+                  <X className="w-5 h-5 text-gray-500" />
+                </button>
+              </div>
             </div>
 
             <div className="flex-1 overflow-y-auto px-6 py-5 space-y-6">

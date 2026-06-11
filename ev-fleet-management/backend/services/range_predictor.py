@@ -17,11 +17,11 @@ import logging
 import numpy as np
 import pandas as pd
 
-from .model_service import get_model, get_encoders, get_features
+from .model_service import get_model, get_car_specs
 
 logger = logging.getLogger(__name__)
 
-# Training-set stats for confidence scoring (from daata.csv)
+# Training-set stats for confidence scoring (approximate or fallback)
 TRAIN_STATS = {
     "Current Battery Level (%)":  {"mean": 50.0,  "std": 29.0},
     "Current Speed (km/h)":       {"mean": 65.0,  "std": 35.0},
@@ -39,47 +39,55 @@ def predict_range(
     road_type: str,           # "City" | "Highway"
     brand: str,
     model_name: str,
+    trip: float = 0.0,        # Default trip length to 0.0 if not provided
 ) -> dict:
     """
-    Predict remaining range (km) using the trained GradientBoostingRegressor.
-
-    Returns
-    -------
-    {
-        predicted_range_km : float,
-        effective_mileage  : float,   km per full charge
-        confidence_score   : float,   0-100
-        confidence_level   : str,     High / Medium / Low
-        road_type          : str,
-    }
+    Predict remaining range (km) using the loaded custom model package.
     """
-    # ── Encode road_type using encoders from the model pickle ─────────────────
-    encoders = get_encoders()
-    le_city_highway = encoders.get("City/Highway")
-    if le_city_highway is not None:
-        road_type_str = "0" if road_type == "City" else "1"
-        try:
-            city_highway_enc = int(le_city_highway.transform([road_type_str])[0])
-        except Exception:
-            city_highway_enc = 0 if road_type == "City" else 1
+    # Rule 1: If battery is 0, predicted remaining range is exactly 0.0
+    if battery_level_pct == 0:
+        predicted_range_km = 0.0
     else:
-        city_highway_enc = 0 if road_type == "City" else 1
+        car_specs = get_car_specs()
+        
+        # Robust lookup in car_specs for the model row
+        matches = car_specs[car_specs['Model'] == model_name]
+        if len(matches) == 0:
+            matches = car_specs[car_specs['Model'].str.lower() == model_name.lower()]
+        if len(matches) == 0:
+            matches = car_specs[car_specs['Model'].str.lower().str.contains(model_name.lower())]
+        
+        if len(matches) == 0:
+            specs = car_specs.iloc[0]
+        else:
+            specs = matches.iloc[0]
 
-    row = {
-        "Current Battery Level (%)": float(battery_level_pct),
-        "Vehicle Weight (kg)":       float(vehicle_weight_kg),
-        "Current Speed (km/h)":      float(current_speed_kmh),
-        "Battery Temperature (Â°C)": float(battery_temp_c),
-        "City/Highway_enc":          float(city_highway_enc),
-    }
+        # Convert city/highway string input into 0 or 1
+        city_highway_val = 0 if road_type == "City" else 1
 
-    # ── Build DataFrame in exact column order ─────────────────────────────────
-    df = pd.DataFrame([row], columns=get_features())
+        # Build feature vector in exact order:
+        # ["Trip (km)", "Current Battery Level (%)", "Car_Encoded", "City/Highway", "Current Speed (km/h)", 
+        #  "Battery_Capacity", "Claimed_Range", "Vehicle_Weight", "Energy_Consumption", "Max_Power", "Brand_Encoded"]
+        feature_vector = {
+            "Trip (km)": float(trip),
+            "Current Battery Level (%)": float(battery_level_pct),
+            "Car_Encoded": float(specs["Car_Encoded"]),
+            "City/Highway": float(city_highway_val),
+            "Current Speed (km/h)": float(current_speed_kmh),
+            "Battery_Capacity": float(specs["Battery_Capacity"]),
+            "Claimed_Range": float(specs["Claimed_Range"]),
+            "Vehicle_Weight": float(specs["Vehicle_Weight"]),
+            "Energy_Consumption": float(specs["Energy_Consumption"]),
+            "Max_Power": float(specs["Max_Power"]),
+            "Brand_Encoded": float(specs["Brand_Encoded"])
+        }
 
-    # ── Predict ───────────────────────────────────────────────────────────────
-    model = get_model()
-    raw = float(model.predict(df)[0])
-    predicted_range_km = max(0.0, round(raw, 1))
+        # Predict range per percent battery, then scale by multiplying by battery level
+        model = get_model()
+        df_features = pd.DataFrame([feature_vector])
+        predicted_range_per_percent = float(model.predict(df_features)[0])
+        predicted_range = predicted_range_per_percent * battery_level_pct
+        predicted_range_km = max(0.0, round(predicted_range, 1))
 
     # ── Effective mileage (km per full 100 % charge) ──────────────────────────
     battery_frac = battery_level_pct / 100.0
@@ -88,7 +96,14 @@ def predict_range(
     )
 
     # ── Confidence ────────────────────────────────────────────────────────────
-    confidence_score = _compute_confidence(row)
+    # Fallback/estimate check
+    row_for_conf = {
+        "Current Battery Level (%)": float(battery_level_pct),
+        "Current Speed (km/h)":      float(current_speed_kmh),
+        "Battery Temperature (Â°C)": float(battery_temp_c),
+        "Vehicle Weight (kg)":        float(vehicle_weight_kg),
+    }
+    confidence_score = _compute_confidence(row_for_conf)
     confidence_level = (
         "High"   if confidence_score >= 85
         else "Medium" if confidence_score >= 70
@@ -114,3 +129,4 @@ def _compute_confidence(row: dict) -> float:
         return 75.0
     mean_z = float(np.mean(z_scores))
     return round(max(40.0, min(98.0, 98.0 - mean_z * 15.0)), 1)
+

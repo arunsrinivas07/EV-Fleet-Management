@@ -25,11 +25,14 @@ export default function MiniRevenueChart({ data, period = 'Weekly', revenueGrowt
   const isPositive = revenueGrowth >= 0;
 
   const periodLabel = {
-    Daily:   'Today',
-    Weekly:  'This week',
-    Monthly: 'This month',
-    Yearly:  'This year',
+    Daily:       'Today',
+    Weekly:      'This week',
+    Monthly:     'This month',
+    'Last 3 Mo': 'Last 3 months',
+    Yearly:      'This year',
   }[period] ?? '';
+
+  const displayTitle = period === 'Last 3 Mo' ? 'Last 3 Months' : period;
 
   return (
     <motion.div
@@ -41,7 +44,7 @@ export default function MiniRevenueChart({ data, period = 'Weekly', revenueGrowt
       <div className="flex items-start justify-between mb-6">
         <div>
           <h3 className="text-lg font-bold text-gray-800">
-            {period === 'Weekly' ? 'Weekly' : period === 'Monthly' ? 'Monthly' : 'Yearly'} Revenue
+            {displayTitle} Revenue
           </h3>
           <p className="text-sm text-gray-500">Fleet earnings vs target · {periodLabel}</p>
         </div>

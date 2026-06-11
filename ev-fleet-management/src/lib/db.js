@@ -313,38 +313,36 @@ export async function fetchChargingStations() {
 
 export async function assignVehicleToDriver(driverId, vehicleId) {
   try {
-    // 1. Get the driver's current vehicle (if any) to release it back to idle
-    const { data: driverData } = await supabase
+    // 1. Get driver's current vehicle to release it
+    const { data: driverData, error: fetchErr } = await supabase
       .from('drivers')
       .select('vehicle_id')
       .eq('id', driverId)
       .maybeSingle();
 
+    if (fetchErr) throw fetchErr;
+
     const previousVehicleId = driverData?.vehicle_id;
 
-    // 2. Assign the new vehicle to the driver
-    const { data: driverUpdateData, error: driverError } = await supabase
+    // 2. Assign vehicle to driver
+    const { error: driverError, count } = await supabase
       .from('drivers')
       .update({ vehicle_id: vehicleId })
-      .eq('id', driverId)
-      .select();
-    if (driverError) throw driverError;
-    if (!driverUpdateData || driverUpdateData.length === 0) {
-      throw new Error('Update failed. You may not have permission to assign vehicles.');
-    }
+      .eq('id', driverId);
 
-    // 3. Set the newly assigned vehicle to idle (ready for the driver)
-    const { data: vehicleUpdateData, error: vehicleError } = await supabase
+    if (driverError) throw driverError;
+    // count = 0 means RLS blocked the update
+    if (count === 0) throw new Error('No rows updated — check RLS policies (run trigger_and_rls_fix.sql).');
+
+    // 3. Set new vehicle status to idle
+    const { error: vehicleError } = await supabase
       .from('vehicles')
       .update({ status: 'idle' })
-      .eq('id', vehicleId)
-      .select();
-    if (vehicleError) throw vehicleError;
-    if (!vehicleUpdateData || vehicleUpdateData.length === 0) {
-      throw new Error('Failed to update vehicle status.');
-    }
+      .eq('id', vehicleId);
 
-    // 4. If driver had a previous vehicle, set it back to idle
+    if (vehicleError) throw vehicleError;
+
+    // 4. Release previous vehicle back to idle
     if (previousVehicleId && previousVehicleId !== vehicleId) {
       await supabase
         .from('vehicles')
