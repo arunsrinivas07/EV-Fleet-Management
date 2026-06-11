@@ -67,7 +67,7 @@ export default function LoginPage() {
           </div>
 
           <div className="mb-8">
-            <h2 className="text-3xl font-bold text-gray-800 mb-2">Welcome back 👋</h2>
+            <h2 className="text-3xl font-bold text-gray-800 mb-2">Welcome back </h2>
             <p className="text-gray-500">Sign in to your account to continue</p>
           </div>
 
@@ -78,11 +78,10 @@ export default function LoginPage() {
                 key={role}
                 type="button"
                 onClick={() => handleRoleHint(role)}
-                className={`flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-semibold transition-all duration-200 ${
-                  roleHint === role
+                className={`flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-semibold transition-all duration-200 ${roleHint === role
                     ? 'bg-white text-emerald-700 shadow-md'
                     : 'text-gray-500 hover:text-gray-700'
-                }`}
+                  }`}
               >
                 {role === 'admin' ? <Shield className="w-4 h-4" /> : <User className="w-4 h-4" />}
                 {role.charAt(0).toUpperCase() + role.slice(1)}
@@ -186,7 +185,7 @@ export default function LoginPage() {
             </Link>
           </p>
 
-          
+
         </motion.div>
       </div>
 
@@ -265,8 +264,8 @@ export default function LoginPage() {
           <div className="flex justify-center gap-8 mt-8">
             {[
               { label: 'Vehicles', value: '8+' },
-              { label: 'Drivers',  value: '8+' },
-              { label: 'Uptime',   value: '99%' },
+              { label: 'Drivers', value: '8+' },
+              { label: 'Uptime', value: '99%' },
             ].map(s => (
               <div key={s.label} className="text-center">
                 <p className="text-2xl font-bold text-emerald-600">{s.value}</p>
